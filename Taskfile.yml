@@ -1,0 +1,13 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  GREETING: Hello, World!
+
+tasks:
+  default:
+    cmds:
+      - uv run python pixiv_auth.py
+
+    silent: true
