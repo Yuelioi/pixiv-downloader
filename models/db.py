@@ -13,8 +13,11 @@ class Image(Model):
   title = fields.CharField(max_length=255)  # 完整标题
   description = fields.TextField(null=True)  # 原神水着等详细描述
   tags = fields.JSONField()  # ["原神", "水着", "Mona"]
-  urls = fields.JSONField()  # 多尺寸URL
-  p = fields.IntField(default=0)  # 分页id
+  url = fields.CharField(max_length=512)  # 页面链接
+  page_count = fields.IntField(default=0)  # 页数
+  page = fields.IntField(default=0)  # 页码
+  urls = fields.JSONField()  # 图片链接
+  meta = fields.JSONField()  # 其他元数据
 
   # 画师信息（直接内嵌）
   user_id = fields.CharField(max_length=255, index=True)
@@ -56,4 +59,4 @@ class Image(Model):
         name="idx_tags",
       ),
     ]
-    unique_together = (("img_id", "p"),)
+    unique_together = (("img_id", "page"),)

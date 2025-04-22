@@ -1,6 +1,8 @@
+import asyncio
 import hashlib
 import re
-from datetime import datetime
+import traceback
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tortoise.exceptions import IntegrityError
@@ -85,59 +87,97 @@ async def create_image_from_illust(illust: Illust) -> Image:
   return image
 
 
-async def batch_create_images(illust_list: list[Illust], batch_size=100):
+async def batch_create_images(illust_list: list, batch_size=100, retry_on_fail=True, max_retries=3):
   """
-  批量创建图片记录（自动过滤重复项）
+  批量创建图片记录（自动过滤重复项，支持出错重试）
   :param illust_list: Pixiv API返回的作品列表
   :param batch_size: 每批插入数量（建议100-500）
+  :param retry_on_fail: 插入失败时是否尝试重试
+  :param max_retries: 最大重试次数
   """
   if not illust_list:
     return
 
   image_objs = []
+  illust_count = 0
 
-  # 这里可以不包一个全局事务，也可以每次 bulk_create 时启动子事务
+  now = datetime.now(timezone.utc)
+
   for illust in illust_list:
-    # 提取文件扩展名
+    illust_count += 1
     try:
+      # 提取文件扩展名
       original_url = illust.meta[0].urls.original
       file_ext = original_url.split(".")[-1].lower().split("?")[0]
       file_ext = file_ext if file_ext in ("png", "jpg", "jpeg") else "jpg"
-    except Exception:
+    except Exception as e:
+      print(f"⚠️ illust {illust.id} 提取文件扩展名失败：{e}")
       file_ext = "jpg"
 
-    for p in range(illust.page_count):
-      image_objs.append(
-        Image(
-          img_id=illust.id,
-          p=p,
-          title=illust.title[:255],
-          tags=illust.tags,
-          urls=illust.meta[0] and illust.meta[0].urls.to_dict(),
-          user_id=illust.user_id,
-          user_name=illust.user_name[:255],
-          user_avatar=illust.profile_image_url,
-          width=illust.width,
-          height=illust.height,
-          bookmarks=illust.bookmark_data.get("count", 0) if illust.bookmark_data else 0,
-          views=0,
-          source="pixiv",
-          x_restrict=illust.x_restrict,
-          ai_type=illust.ai_type,
-          created=illust.create_date,
-          file_ext=file_ext,
-          hash="",
-        )
-      )
+    try:
+      for page in range(illust.page_count):
+        urls = illust.meta[page].urls.to_dict()
+        width = illust.meta[page].width
+        height = illust.meta[page].height
 
-    # 达到批量阈值，就插一次
-    if len(image_objs) >= batch_size:
-      async with in_transaction():
-        # 忽略冲突，跳过已存在的记录
-        await Image.bulk_create(image_objs, ignore_conflicts=True)
-      image_objs.clear()
+        image_objs.append(
+          Image(
+            img_id=illust.id,
+            title=illust.title[:255],
+            tags=illust.tags,
+            meta={},
+            user_id=illust.user_id,
+            user_name=illust.user_name[:255],
+            user_avatar=illust.profile_image_url,
+            width=width,
+            height=height,
+            url=illust.url,
+            page=page,
+            urls=urls,
+            description=illust.description,
+            bookmarks=illust.bookmark_data.get("count", 0) if illust.bookmark_data else 0,
+            views=0,
+            source="pixiv",
+            x_restrict=illust.x_restrict,
+            ai_type=illust.ai_type,
+            created=illust.create_date,
+            updated=now,
+            file_ext=file_ext,
+            hash="",
+            score=-100,
+            page_count=illust.page_count,
+          )
+        )
+
+      # 批量提交
+      if len(image_objs) >= batch_size:
+        await insert_batch(image_objs, illust_count, retry_on_fail, max_retries)
+        image_objs.clear()
+
+    except Exception as e:
+      print(f"❌ 构建 illust {illust.id} 出错：{e}")
+      traceback.print_exc()
 
   # 插入剩余未提交的
   if image_objs:
-    async with in_transaction():
-      await Image.bulk_create(image_objs, ignore_conflicts=True)
+    await insert_batch(image_objs, illust_count, retry_on_fail, max_retries)
+
+
+async def insert_batch(image_objs: list, i: int, retry_on_fail: bool, max_retries: int):
+  retries = 0
+  while retries <= max_retries:
+    try:
+      async with in_transaction():
+        # print(f"📤 正在插入 {len(image_objs)} 条图片（进度：{i}）")
+        await Image.bulk_create(image_objs, ignore_conflicts=True)
+      return  # 插入成功，直接返回
+    except Exception as e:
+      print(f"⚠️ 批量插入失败：{e}")
+      traceback.print_exc()
+      retries += 1
+      if retry_on_fail and retries <= max_retries:
+        print(f"🔁 重试插入（{retries}/{max_retries}）...")
+        await asyncio.sleep(1)  # 简单延迟
+      else:
+        print("🚫 放弃本批插入")
+        return

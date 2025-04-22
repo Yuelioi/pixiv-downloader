@@ -52,6 +52,9 @@ class IllustMeta:
       ),
     )
 
+  def to_dict(self) -> Dict[str, Any]:
+    return {"width": self.width, "height": self.height, "urls": self.urls.to_dict()}
+
 
 @dataclass
 class Illust:

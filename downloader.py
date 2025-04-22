@@ -64,7 +64,9 @@ class PixivDownloader:
           illust.meta = meta.metas
         except Exception as e:
           print(f"获取插画 {illust.id} 的 meta 失败: {e}")
+
           illust.meta = []
+          raise RuntimeError("获取插画 meta 失败") from e
 
       await asyncio.gather(*(fetch_meta(illust) for illust in illusts.Illusts))
       return illusts.Illusts, illusts.lastPage, illusts.total

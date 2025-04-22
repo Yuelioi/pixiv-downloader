@@ -7,7 +7,7 @@ class SearchParams(BaseModel):
   keyword: str = Field(description="搜索关键词（必填）")
   p: int = Field(1, description="页码，默认为1")
   order: str = Field("date_d", description="排序方式，默认为date_d")
-  mode: str = Field("safe", description="搜索模式，默认为safe")
+  mode: str = Field("all", description="搜索模式，safe/all/r18")
   scd: Optional[str] = Field(None, description="开始时间")
   ecd: Optional[str] = Field(None, description="结束时间")
   csw: int = Field(1, description="子搜索权重")
